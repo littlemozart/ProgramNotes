@@ -37,55 +37,141 @@ println(c.get())
 
 ### 2. 代码风格更接近同步代码块
 
-异步编程是程序员必定会遇到的问题，我们有很多途径来解决这个问题：
+如何避免进程阻塞是程序员都会遇到的问题，我们有很多途径来解决这个问题：
 
 - 线程
 
-线程应该目前最常见的避免应用程序阻塞的方法。但是线程有一些明显的缺陷：
+    线程应该目前最常见的避免应用程序阻塞的方法。但是线程有一些明显的缺陷：
 
-—— 比较重，切换上下文开销大。
+    [1] 比较重，切换上下文开销大。
 
-—— 可启动的线程数受底层操作系统的限制。
+    [2] 可启动的线程数受底层操作系统的限制。
 
-—— 一些平台中并不支持线程，如 JavaScript 。
+    [3] 一些平台中并不支持线程，如 JavaScript 。
 
-—— Debug，避免竞争条件等麻烦。
+    [4] Debug，避免竞争条件等麻烦。
 
 - 回调
 
-核心思想是将一个函数作为参数传递给另一个函数，并在处理完成后调用该函数。感觉是一个更优雅的解决方案，但又有几个问题：
+    核心思想是将一个函数作为参数传递给另一个函数，并在处理完成后调用该函数。感觉是一个更优雅的解决方案，但又有几个问题：
 
-—— 回调地狱
+    [1] 回调地狱
 
-—— 错误处理复杂
+    [2] 错误处理复杂
 
 - Futures, Promise
 
-背后想法是当我们发起调用的时候，返回一个可被操作的对象。主要有以下几个缺点：
+    背后想法是当我们发起调用的时候，返回一个可被操作的对象。主要有以下几个缺点：
 
-—— 与回调类似，编程模型从自上而下的命令式方法转变为具有链式调用的组合模型，需要对我们的编程方式进行一系列更改。
+    [1] 与回调类似，编程模型从自上而下的命令式方法转变为具有链式调用的组合模型，需要对我们的编程方式进行一系列更改。
 
-—— 返回类型远离不是我们直接需要的类型，而是返回一个必须被内省的新类型 `Promise` / `Futures` 。
+    [2] 返回类型不是我们直接需要的类型，而是一个必须被内省的新类型 `Promise` / `Futures` 。
 
-—— 异常处理会很复杂。错误的传播和链接并不总是直截了当的。
+    [3] 异常处理会很复杂。错误的传播和链接并不总是直截了当的。
 
 - 响应式扩展（如Rx）
 
-响应式 (Rx) 被移植到各种平台，包括 JavaScript（RxJS）。Rx 背后的想法是走向所谓的“可观察流”，我们现在将数据视为流（无限量的数据），并且可以观察到这些流。 实际上，Rx 很简单， Observer Pattern 带有一系列扩展，允许我们对数据进行操作。
+    响应式 (Rx) 被移植到各种平台，包括 JavaScript（RxJS）。Rx 背后的想法是走向所谓的“可观察流”，我们现在将数据视为流（无限量的数据），并且可以观察到这些流。 实际上，Rx 很简单， Observer Pattern 带有一系列扩展，允许我们对数据进行操作。
 
-在方法上它与 Futures 非常相似，但是人们可以将 Future 视为一个离散元素，而 Rx 返回一个流。然而，与前面类似，它还介绍了一种全新的思考我们的编程模型的方式，著名的表述是：
+    在方法上它与 Futures 非常相似，但是 Futures 可被视为一个离散元素，而 Rx 则返回的是一个流。然而，与前面类似，它还介绍了一种全新的思考我们的编程模型的方式，著名的表述是：
 
-> 一切都是流，并且它是可被观察的
+    > 一切都是流，并且它是可被观察的
 
-这意味着处理问题的方式不同，并且在编写同步代码时从我们使用的方式发生了相当大的转变。与 Futures 相反的一个好处是，它被移植到这么多平台，通常我们可以找到一致的 API 体验，无论我们使用 C＃、Java、JavaScript，还是 Rx 可用的任何其他语言。
+    这意味着处理问题的方式不同，并且在编写同步代码时从我们使用的方式发生了相当大的转变。与 Futures 相反的一个好处是，它被移植到这么多平台，通常我们可以找到一致的 API 体验，无论我们使用 C＃、Java、JavaScript、Swift，还是 Rx 可用的任何其他语言。
 
-此外，Rx 确实引入了一种更好的错误处理方法。
+    此外，Rx 确实引入了一种更好的错误处理方法。
 
 - 协程
 
-## `Job` & `Deferred`
+    背后的想法是一种可以被挂起的函数，即可以在某个时刻暂停执行并在稍后恢复的思想。
+
+    协程的一个好处是，当涉及到开发人员时，编写非阻塞代码与编写阻塞代码基本相同。编程模型本身并没有真正改变。以下面的代码为例
+    
+    ```
+    fun postItem(item: Item) {
+        launch {
+            val token = preparePost()
+            val result = doPost(token, item)
+            showResult(result)
+        }
+    }
+    
+    suspend fun preparePost(): Token {
+        // 发起请求并挂起该协程
+        return suspendCoroutine { /* ... */ } 
+    }
+    
+    suspend fun doPost(token: Token, item: Item): Result {
+        // 发起post请求
+        return result
+    }
+    ```
+   
+    `preparePost` 和 `doPost` 就是所谓的 `可挂起的函数`，因为它们含有 `suspend` 前缀。此段代码将启动长时间运行的操作，而不会阻塞主线程。
+
+## 引入协程
+
+首先在 Project 的 build.gradle 中添加 kotlin 插件
+
+```
+buildscript {
+  // kotlin版本必须在1.3以上，写文时最新为1.3.72
+  ext.kotlin_version = '1.3.72'
+  dependencies {
+    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version" // Kotlin Gradle Plugin
+  }
+}
+```
+然后在 app 的 build.gradle 中添加一下依赖
+```
+dependencies {
+  def coroutines_version = 1.3.6
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutines_version"
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutines_version"
+  implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+}
+```
+
+## 协程简析
+
+在我们使用 `协程` 之前，有必要先了解一下这几个概念：
+
+- `CoroutineContext`
+
+    顾名思义，表示协程运行的上下文。它有点类似 `Activity` 和 `Feagment` 的 `Context`，用来管理一些跟生命周期有关的操作。
+
+- `CoroutineScope`
+
+    提供 `CoroutineContext` 的接口，可以理解为协程的容器。协程都是跑在 `CoroutineScope` 里面的。
+
+- `CoroutineBuilders`
+
+    并不是一个类，它是 `CoroutineScope` 的一些扩展函数，用于定义和启动协程，用的最多的是 `launch` 和 `async` ，后面会有详解。    
+
+- `CoroutineDispatchers`
+
+    `CoroutineContext` 包含一个 `CoroutineDispatcher` ，它确定了哪些线程或与线程相对应的协程执行。协程调度器可以将协程限制在一个特定的线程执行，或将它分派到一个线程池。
+    协程调度器有以下四种：
+    
+    [1] `Dispatchers.Default`
+    
+    默认调度器，使用共享的后台线程池。 当协程在 `GlobalScope` 中启动时，使用的就是该调度器。所以 `launch(Dispatchers.Default) { ... }` 与 `GlobalScope.launch { ... }` 使用相同的调度器。
+    
+    [2] `Dispatchers.Main`
+    
+    主线程调度器，指定在主线程 （android 即 UI 线程）中运行。
+    
+    [3] `Dispatchers.IO`
+    
+    I/O调度器，将任务指定在 I/O 线程中执行。和 `Dispatchers.Default` 共享后台线程池。
+    
+    [4] `Dispatchers.Unconfined`
+
+    是一个特殊的调度器，调度器在调用它的线程启动了一个协程，但它仅仅只是运行到第一个挂起点。挂起后，它恢复线程中的协程，而这完全由被调用的挂起函数来决定。非受限的调度器非常适用于执行不消耗 CPU 时间的任务，以及不更新局限于特定线程的任何共享数据（如UI）的协程。
+    
+- `Job` & `Deferred`
  
- A job has the following states:
+    A job has the following states:
 
 | **State**                        | [isActive] | [isCompleted] | [isCancelled] |
 | -------------------------------- | ---------- | ------------- | ------------- |
@@ -118,6 +204,8 @@ println(c.get())
 
 ### withContext
 
-## async
+## `launch`
+
+## `async`
 
 ## LifeCycle中使用协程
