@@ -146,8 +146,7 @@ dependencies {
 
 - `CoroutineBuilders`
 
-    并不是一个类，它是 `CoroutineScope` 的一些扩展函数，用于定义和启动协程，用的最多的是 `launch` 和 `async` ，后面会有详解。    
-
+    并不是一个类，它是 `CoroutineScope` 的一些扩展函数，用于定义和启动协程，用的最多的是 `launch` 和 `async` ，详见下文。
 - `CoroutineDispatchers`
 
     `CoroutineContext` 包含一个 `CoroutineDispatcher` ，它确定了哪些线程或与线程相对应的协程执行。协程调度器可以将协程限制在一个特定的线程执行，或将它分派到一个线程池。
@@ -195,16 +194,84 @@ dependencies {
               | Cancelling | --------------------------------> | Cancelled |
               +------------+                                   +-----------+
 ```
- 
-## 挂起函数
-
-### suspend fun
-
-### coroutineScope
-
-### withContext
 
 ## `launch`
+
+### 第一个协程程序
+
+```
+fun main() {
+    GlobalScope.launch { // 在后台启动一个新的协程并继续
+        delay(500) // 非阻塞的等待 500 毫秒
+        println("world")
+    }
+    println("hello") // 协程已在等待时主线程还在继续
+    Thread.sleep(1000) // 阻塞主线程 2 秒钟来保证 JVM 存活
+}
+```
+
+这里我们在 `GlobalScope` 中启动了一个新的协程，这意味着新协程的生命周期只受整个应用程序的生命周期限制。
+
+### runBlocking
+
+```
+fun main() {
+    GlobalScope.launch { // 在后台启动一个新的协程并继续
+        delay(500)
+        println("world")
+    }
+    println("hello")
+    runBlocking {     // 这个表达式阻塞了主线程
+        delay(1000)  // 延迟 1 秒来保证 JVM 的存活
+    } 
+}
+```
+
+调用了 `runBlocking` 的主线程会一直阻塞直到 `runBlocking` 内部的协程执行完毕。
+它也作为用来启动顶层主协程的适配器
+
+```
+fun main() = runBlocking {
+    GlobalScope.launch {
+        delay(500)
+        println("world")
+    }
+    println("hello")
+    delay(1000)
+}
+```
+
+### 等待协程执行完
+
+延迟一段时间来等待另一个协程运行并不是一个好的选择。让我们显式（以非阻塞方式）等待所启动的后台 `Job` 执行结束：
+
+```
+fun main() = runBlocking {
+    val job = GlobalScope.launch {
+        delay(500)
+        println("world")
+    }
+    println("hello")
+    job.join()
+}
+```
+
+### 结构化的并发
+
+上面提到 `join` 来等待协程结束，需要用一个变量来持有协程的引用。除此之外，有一个更好的解决办法。我们可以在代码中使用结构化并发。 
+我们可以在执行操作所在的指定作用域内启动协程， 而不是像通常使用线程（线程总是全局的）那样在 `GlobalScope` 中启动。
+
+```
+fun main() = runBlocking {
+    launch { // 在 runBlocking 作用域中启动一个新协程
+        delay(500)
+        println("world")
+    }
+    println("hello")
+}
+```
+
+外部协程（示例中的 `runBlocking` ）直到在其作用域中启动的所有协程都执行完毕后才会结束。
 
 ## `async`
 
