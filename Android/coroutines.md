@@ -275,4 +275,177 @@ fun main() = runBlocking {
 
 ## `async`
 
-## LifeCycle中使用协程
+### 顺序调用
+
+假设我们在不同的地方定义了两个进行某种调用远程服务或者进行计算的挂起函数：
+
+```
+suspend fun getNumber1(): Int {
+    delay(1000) // 模拟耗时操作
+    return 1
+}
+
+suspend fun getNumber2(): Int {
+    delay(1000) // 模拟耗时操作
+    return 2 
+}
+```
+
+下面用一个函数测试顺序调用花费时间：
+
+```
+fun main() = runBlocking {
+    val time = measureTimeMillis {
+        val num1 = getNumber1()
+        val num2 = getNumber2()
+        println("The answer is ${num1 + num2}")
+    }
+    println("Completed in $time ms")
+}
+```
+
+结果是显而易见的。实际上，如果我们要根据第一个函数的结果来决定是否我们需要调用第二个函数或者决定如何调用它时，才会这样做。
+
+### 并发调用
+
+如果 `getNumber1` 与 `getNumber2` 之间没有依赖，并且我们想更快的得到结果，这时 `async` 就派上用场了。
+在概念上，`async` 就类似于 `launch` 。它启动了一个单独的协程，不同之处在于 `launch` 返回一个 `Job` 并且不附带任何结果值，而 `async` 返回一个 `Deferred` —— 一个轻量级的非阻塞 `Future`，
+你可以使用 `.await()` 在一个延期的值上得到它的最终结果。 因为 `Deferred` 继承 `Job` ，所以同样可以用 `.cancel()` 取消它。
+
+```
+fun main() = runBlocking {
+    val time = measureTimeMillis {
+        val def1 = async { getNumber1() }
+        val def2 = async { getNumber2() }
+        println("The answer is ${def1.await() + def2.await()}")
+    }
+    println("Completed in $time ms")
+}
+```
+
+运行时间大概是上面的一半，因为两个协程并发执行。
+
+### 懒性启动
+
+`async` 可以通过将 `start` 参数设置为 `CoroutineStart.LAZY` 而变为惰性的。 在这个模式下，只有结果通过 `await` 获取的时候协程才会启动，或者在 `Job` 的 `start` 函数调用的时候。运行下面的示例：
+
+```
+fun main() = runBlocking {
+    val time = measureTimeMillis {
+        val def1 = async(start = CoroutineStart.LAZY) { getNumber1() }
+        val def2 = async(start = CoroutineStart.LAZY) { getNumber2() }
+        // 执行一些计算
+        def1.start() // 启动第一个
+        def2.start() // 启动第二个
+        println("The answer is ${def1.await() + def2.await()}")
+    }
+    println("Completed in $time ms")
+}
+```
+
+注意，如果我们只是在 `println` 中调用 `await`，而没有在单独的协程中调用 `start` ，这将会导致顺序行为，直到 `await` 启动该协程执行并等待至它结束，这并不是惰性的预期用例。
+
+### `coroutineScope` 函数
+
+由于 `async` 被定义为了 `CoroutineScope` 上的扩展，我们需要将它写在作用域内，而 `coroutineScope` 函数提供了这种操作：
+
+```
+suspend fun concurrentSum(): Int = coroutineScope {
+    val def1 = async { getNumber1() }
+    val def2 = async { getNumber2() }
+    def1.await() + def2.await()
+}
+```
+
+这是一种结构化并发的写法，通过 `coroutineScope` 封装成一个挂起函数。
+
+###  `withContext` 函数
+
+与 `coroutineScope` 类似可用来创建挂起函数，不同的是，`withContext` 需要指定协程调度器。
+
+```
+suspend fun concurrentSum2(): Int = withContext(Dispatchers.Default) {
+    val def1 = async { getNumber1() }
+    val def2 = async { getNumber2() }
+    def1.await() + def2.await()
+}
+```
+
+当我们需要发起网络请求时，可以使用 `withContext(Dispatchers.IO)` 来执行它。
+
+## 协程在 LifeCycle / ViewModel 中的使用
+
+在 Android 中，使用协程需要指定其 `CoroutineScope` 。 JetPack 中可以方便的使用 LifeCycle 组件的扩展属性 `LifecycleOwner.lifecycleScope` 和
+ViewModel 组件的扩展属性 `ViewModel.viewModelScope` 来执行协程。
+
+首先，需要在 gradle 文件添加以下扩展依赖：
+```
+dependencies {
+    // for LifeCycleScope
+    impletementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.2.0'
+    // for ViewModelScope
+    impletementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.2.0'
+}
+```
+
+然后可在 LifeCycle/ViewModel 组件中使用。
+
+```
+class MyFragment: Fragment() {
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        viewLifecycleOwner.lifecycleScope.launch {
+            
+        }
+    }
+}
+
+class MyViewModel: ViewModel() {
+    init {
+        viewModelScope.launch {
+            // Coroutine that will be canceled when the ViewModel is cleared.
+        }
+    }
+}
+```
+
+因为这些扩展属性实现时都在销毁时调用了 `cancel`，所以我们不必担心内存泄漏问题。
+
+## 协程在 Retrofit 中的使用
+
+Retrofit 在 2.6.0+ 的版本开始支持 `suspend fun` 的形式，并且由于内部已经异步处理，所以不用我们指定 `Dispatchers.IO` 来执行。
+简单的示例如下：
+
+```
+// 数据类
+data class DataResponse(
+    ...
+)
+
+// 数据接口类
+interface DataApi {
+    @GET("api/get")
+    suspend fun getData(): DataResponse
+}
+
+// 在 ViewModel 中使用
+class DataViewModel : ViewModel() {
+    private val api by lazy {
+        Retrofit.Builder().baseUrl("xxx")
+            .addConverterFactory(MoshiConverterFactory.create()) // 添加JSON解析器
+            .build()
+            .create(DataResponse::class.java)
+    }
+    
+    private val dataModel by lazy {
+        MutableLiveData<DataResponse>()
+    }
+
+    init {
+        viewModelScope.launch {
+            val data = api.getData()
+            dataModel.postValue(data)
+        }
+    }
+}
+```
