@@ -387,6 +387,77 @@ suspend fun concurrentSum2(): Int = withContext(Dispatchers.Default) {
 
 当我们需要发起网络请求时，可以使用 `withContext(Dispatchers.IO)` 来执行它。
 
+## 并发问题
+
+首先看一个例子
+
+```
+suspend fun massiveRun(action: suspend () -> Unit) {
+    val n = 100  // 启动的协程数量
+    val k = 1000 // 每个协程重复执行同一动作的次数
+    val time = measureTimeMillis {
+        coroutineScope { // 协程的作用域
+            repeat(n) {
+                launch {
+                    repeat(k) { action() }
+                }
+            }
+        }
+    }
+    println("Completed ${n * k} actions in $time ms")
+}
+
+fun main() = runBlocking {
+    var counter = 0
+    withContext(Dispatchers.Default) {
+        massiveRun {
+            counter++
+        }
+    }
+    println("counter = $counter")
+}
+```
+
+这段代码最后打印出什么结果？
+
+它不太可能打印出 `Counter = 100000` ，因为一百个协程在多个线程中同时递增计数器但没有做并发处理。
+
+### Volatile 可以解决问题吗？
+
+```
+@Volatile
+var counter = 0
+
+fun main() = runBlocking {
+    withContext(Dispatchers.Default) {
+        massiveRun {
+            counter++
+        }
+    }
+    println("Counter = $counter")
+}
+```
+
+用 `Volatile` 修饰后运行速度似乎变更慢了，而且仍然没有得到 `Counter = 100000` 这个结果，可见 `Volatile` 也无济于事。因为 `Volatile` 虽然保证了可见性，但是无法保证原子性。
+
+### 采用线程安全的数据结构
+
+```
+fun main() = runBlocking {
+    val counter = AtomicInteger()
+    withContext(Dispatchers.Default) {
+        massiveRun {
+            counter.incrementAndGet()
+        }
+    }
+    println("Counter = $counter")
+}
+```
+
+这次我们得到了 `Counter = 100000` 的正确结果了。
+
+线程安全的数据结果适用于普通计数器、集合、队列和其他标准数据结构以及它们的基本操作。然而，它并不容易被扩展来应对复杂状态、或一些没有现成的线程安全实现的复杂操作。
+
 ## 协程在 LifeCycle / ViewModel 中的使用
 
 在 Android 中，使用协程需要指定其 `CoroutineScope` 。 JetPack 中可以方便的使用 LifeCycle 组件的扩展属性 `LifecycleOwner.lifecycleScope` 和
