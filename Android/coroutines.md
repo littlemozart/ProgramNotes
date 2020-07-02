@@ -147,11 +147,11 @@ dependencies {
 
 - `CoroutineContext`
 
-    顾名思义，表示协程运行的上下文。它有点类似 `Activity` 和 `Fragment` 的 `Context`，用来管理一些跟生命周期有关的操作。
+    是一个接口，所有可以被称为协程上下文的元素都实现了这个接口，这些元素包括了 `Dispatchers` 以及 `Job` 等等。
 
 - `CoroutineScope`
 
-    提供 `CoroutineContext` 的接口，可以理解为协程的容器。协程都是跑在 `CoroutineScope` 里面的。
+    提供 `CoroutineContext` 的接口，翻译为协程的作用域。协程都是跑在 `CoroutineScope` 里面的。
 
 - `CoroutineBuilders`
 
@@ -179,7 +179,7 @@ dependencies {
     
 - `Job` & `Deferred`
  
-    可理解为协程本身。 `Deferred` 继承 `Job`，它们的区别是 `Job` 完成时是没有返回值的，而 `Deferred` 可指定返回类型。
+    协程作用域里的任务。 `Deferred` 继承 `Job`，它们的区别是 `Job` 完成时是没有返回值的，而 `Deferred` 可指定返回类型。
     它们有以下状态：
 
 | **State**                        | [isActive] | [isCompleted] | [isCancelled] |
