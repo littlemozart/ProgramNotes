@@ -8,7 +8,9 @@
 
 **方案**： 实现 `WebChromeClient` 的 `onShowCustomView` 和 `onHideCustomView` 方法，把网页视频对应的 View 放到 `DecorView` 或通过 `WindowManager.addView()` 添加到 window 层。 
 
-**坑点**： 在测试过程中，发现一些视频直接切换到横屏全屏模式后，会自动切回竖屏非全屏状态。
+**坑点**： 在测试过程中，发现一些视频直接切换到横屏全屏模式后，会自动切回竖屏非全屏状态。如下图所示：
+
+![image](https://github.com/littlemozart/ProgramNotes/blob/master/assets/sample_1.gif)
 
 **定位**： 发现出现上述现象的视频都是高比宽大的，即竖直方向的视频。看了谷歌 chrome 浏览的表现，发现它会根据视频的宽高比选择全屏后手机横竖屏的模式。所以得出结论是，不能直接切换到横屏全屏模式，
 应根据视频的宽高判断，如果源视频的宽度大于高度，则可横屏全屏，否则须竖屏横屏。
