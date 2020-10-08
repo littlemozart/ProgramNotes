@@ -13,8 +13,7 @@
 **定位**： 发现出现上述现象的视频都是高比宽大的，即竖直方向的视频。看了谷歌 chrome 浏览的表现，发现它会根据视频的宽高比选择全屏后手机横竖屏的模式。所以得出结论是，不能直接切换到横屏全屏模式，
 应根据视频的宽高判断，如果源视频的宽度大于高度，则可横屏全屏，否则须竖屏横屏。
 
-**思路**： 在收到 `onShowCustomView` 回调时先竖屏全屏，然后通过调用 js 方法获取原视频的宽高，在判断是否要切到横屏模式。
-
+**思路**： 在收到 `onShowCustomView` 回调时先竖屏全屏，然后通过调用 js 方法获取原视频的宽高，在判断是否要切到横屏模式。下面是 js 获取视频宽高的方法：
 
 ```
 function getVideoRect() {
@@ -31,14 +30,23 @@ function getVideoRect() {
 ```
 
 **实现**： 
+
+1. 定义 Owner 接口
 ```
-class VideoChromeClient(activity: Activity) : WebChromeClient() {
+interface VideoWebViewOwner {
+
+    fun getVideoContainer(): ViewGroup // 全屏视频 view 的容器
+
+    fun onFullscreenEventChanged(isFullscreen: Boolean) // 监听全屏事件
+}
+```
+
+2. 自定义 WebChromeClient 重写 `onShowCustomView` 和 `onHideCustomView` 事件
+```
+class VideoChromeClient(private val webViewOwner: VideoWebViewOwner) : WebChromeClient() {
 
     private var customView: View? = null
     private var customViewCallback: CustomViewCallback? = null
-    private var onFullscreenListener: OnFullscreenListener? = null
-
-    private val weakActivity = WeakReference(activity)
 
     var isFullscreen: Boolean = false
         private set
@@ -56,6 +64,7 @@ class VideoChromeClient(activity: Activity) : WebChromeClient() {
     }
 
     fun onBackPressed(): Boolean {
+        // 如果在全屏状态有 BackPressed 事件发生，先切换小屏状态
         if (isFullscreen) {
             onHideCustomView()
             return false
@@ -63,87 +72,41 @@ class VideoChromeClient(activity: Activity) : WebChromeClient() {
         return true
     }
 
-    fun setOnFullscreenListener(listener: OnFullscreenListener?) {
-        onFullscreenListener = listener
-    }
-
     private fun enterFullscreen(view: View?, callback: CustomViewCallback?) {
+        isFullscreen = true
         customView = view
         customViewCallback = callback
-        getDecorView()?.run {
-            addView(
-                customView,
-                FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                )
-            )
-        }
-        isFullscreen = true
-        onFullscreenListener?.onFullscreen()
-        updateStatusBar()
+        webViewOwner.getVideoContainer().addView(customView)
+        webViewOwner.onFullscreenEventChanged(isFullscreen)
     }
 
     private fun exitFullscreen() {
-        if (customView != null) {
-            getDecorView()?.run {
-                removeView(customView)
-            }
-        }
+        isFullscreen = false
+        webViewOwner.getVideoContainer().removeView(customView)
         customView = null
         customViewCallback?.onCustomViewHidden()
         customViewCallback = null
-        isFullscreen = false
-        weakActivity.get()?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        updateStatusBar()
-    }
-
-    private fun getDecorView(): FrameLayout? {
-        return weakActivity.get()?.window?.decorView as? FrameLayout
-    }
-
-    @Suppress("DEPRECATION")
-    private fun updateStatusBar() {
-        if (isFullscreen) {
-            weakActivity.get()?.window?.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-        } else {
-            weakActivity.get()?.window?.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-        }
-    }
-
-    interface OnFullscreenListener {
-        fun onFullscreen()
+        webViewOwner.onFullscreenEventChanged(isFullscreen)
     }
 
 }
 ```
 
-`Activity` 对应代码
-
+3. 处理 Activity 返回事件和全屏监听事件
 ```
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), VideoWebViewOwner {
 
-    private lateinit var chromeClient: CustomWebChromeClient
+    private lateinit var chromeClient: VideoChromeClient
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        chromeClient = CustomWebChromeClient(this)
-        chromeClient.setOnFullscreenListener {
-            web_view.evaluateJavascript(js) { result ->
-                val jb = JSONObject(result)
-                val width = jb.getInt("width")
-                val height = jb.getInt("height")
-                if (width > height && chromeClient.isFullscreen) {
-                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                }
-            }
-        }
         setContentView(R.layout.activity_main)
+        chromeClient = VideoChromeClient(this)
         web_view.settings.javaScriptEnabled = true
         web_view.webChromeClient = chromeClient
-        web_view.webViewClient = WebViewClient()
-        web_view.loadUrl("https://ilearningx.huawei.com/m/login?next=%252Fm%252Fpages%252Fhome%252Fcenter%252Findex")
+        web_view.webViewClient = CustomWebViewClient()
+        web_view.loadUrl("https://b23.tv/wBOJJr")
     }
 
     override fun onDestroy() {
@@ -161,6 +124,28 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun getVideoContainer(): ViewGroup {
+        return video_container
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onFullscreenEventChanged(isFullscreen: Boolean) {
+        if (isFullscreen) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            web_view.evaluateJavascript(js) { result ->
+                val jb = JSONObject(result)
+                val width = jb.getInt("width")
+                val height = jb.getInt("height")
+                if (width > height && chromeClient.isFullscreen) {
+                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                }
+            }
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+
     private val js = """
         function getVideoRect() {
             let tags = document.getElementsByTagName('video');
@@ -175,6 +160,19 @@ class MainActivity : AppCompatActivity() {
         }
         getVideoRect();
     """
+
+    private class CustomWebViewClient : WebViewClient() {
+        override fun shouldOverrideUrlLoading(
+            view: WebView?,
+            request: WebResourceRequest?
+        ): Boolean {
+            val url = request?.url?.toString()
+            if (url != null && (!url.startsWith("http") || !url.startsWith("https"))) {
+                return true
+            }
+            return super.shouldOverrideUrlLoading(view, request)
+        }
+    }
 }
 ```
 
