@@ -33,162 +33,13 @@ function getVideoRect() {
 
 **实现**： 
 
-1. 定义 Owner 接口
-```
-interface VideoWebViewOwner {
-
-    fun getVideoContainer(): ViewGroup // 全屏视频 view 的容器
-
-    fun onFullscreenEventChanged(isFullscreen: Boolean) // 监听全屏事件
-}
-```
-
-2. 自定义 WebChromeClient 重写 `onShowCustomView` 和 `onHideCustomView` 事件
-```
-class VideoChromeClient(private val webViewOwner: VideoWebViewOwner) : WebChromeClient() {
-
-    private var customView: View? = null
-    private var customViewCallback: CustomViewCallback? = null
-
-    var isFullscreen: Boolean = false
-        private set
-
-    override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
-        if (customView != null) {
-            onHideCustomView()
-        } else {
-            enterFullscreen(view, callback)
-        }
-    }
-
-    override fun onHideCustomView() {
-        exitFullscreen()
-    }
-
-    fun onBackPressed(): Boolean {
-        // 如果在全屏状态有 BackPressed 事件发生，先切换小屏状态
-        if (isFullscreen) {
-            onHideCustomView()
-            return false
-        }
-        return true
-    }
-
-    private fun enterFullscreen(view: View?, callback: CustomViewCallback?) {
-        isFullscreen = true
-        customView = view
-        customViewCallback = callback
-        webViewOwner.getVideoContainer().addView(customView)
-        webViewOwner.onFullscreenEventChanged(isFullscreen)
-    }
-
-    private fun exitFullscreen() {
-        isFullscreen = false
-        webViewOwner.getVideoContainer().removeView(customView)
-        customView = null
-        customViewCallback?.onCustomViewHidden()
-        customViewCallback = null
-        webViewOwner.onFullscreenEventChanged(isFullscreen)
-    }
-
-}
-```
-
-3. 处理 Activity 返回事件和全屏监听事件
-```
-class MainActivity : AppCompatActivity(), VideoWebViewOwner {
-
-    private lateinit var chromeClient: VideoChromeClient
-
-    @SuppressLint("SetJavaScriptEnabled")
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-        chromeClient = VideoChromeClient(this)
-        web_view.settings.javaScriptEnabled = true
-        web_view.webChromeClient = chromeClient
-        web_view.webViewClient = CustomWebViewClient()
-        web_view.loadUrl("https://b23.tv/wBOJJr")
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        web_view.destroy()
-    }
-
-    override fun onBackPressed() {
-        if (chromeClient.onBackPressed()) {
-            if (web_view.canGoBack()) {
-                web_view.goBack()
-                return
-            }
-            super.onBackPressed()
-        }
-    }
-
-    override fun getVideoContainer(): ViewGroup {
-        return video_container
-    }
-
-    @Suppress("DEPRECATION")
-    override fun onFullscreenEventChanged(isFullscreen: Boolean) {
-        if (isFullscreen) {
-            window.decorView.systemUiVisibility = fullscreenFlags
-            web_view.evaluateJavascript(js) { result ->
-                val jb = JSONObject(result)
-                val width = jb.getInt("width")
-                val height = jb.getInt("height")
-                if (width > height && chromeClient.isFullscreen) {
-                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                }
-            }
-        } else {
-            window.decorView.systemUiVisibility = 0
-            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    private val fullscreenFlags = (View.SYSTEM_UI_FLAG_FULLSCREEN
-            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-            or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-            or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
-
-    private val js = """
-        function getVideoRect() {
-            let tags = document.getElementsByTagName('video');
-            if (tags.length > 0) {
-                let video = tags[0];
-                return {
-                    'width': video.videoWidth,
-                    'height': video.videoHeight
-                };
-            }
-            return {};
-        }
-        getVideoRect();
-    """
-
-    private class CustomWebViewClient : WebViewClient() {
-        override fun shouldOverrideUrlLoading(
-            view: WebView?,
-            request: WebResourceRequest?
-        ): Boolean {
-            val url = request?.url?.toString()
-            if (url != null && (!url.startsWith("http") || !url.startsWith("https"))) {
-                return true
-            }
-            return super.shouldOverrideUrlLoading(view, request)
-        }
-    }
-}
-```
+参考 [web-video](https://github.com/littlemozart/web-video) 中的 `WebVideoActivity`
 
 ## 方式二：用原生视频代替 WebView 中的视频
 
 **场景**： 知道原视频地址和格式的情况下；有复杂的交互，对性能要求交高。
 
-**背景**： 在 hybrid 的应用中，通常网页部分不直接用 `video` 标签，而是采用一个占位图显示。当点击播放按钮时通过调用原生的方法，由原生视频来实现播放功能。
+**背景**： 通常用在 hybrid 应用中，网页部分不直接用 `video` 标签，而是采用一个占位图显示。当点击播放按钮时通过调用原生的方法，由原生视频来实现播放功能。
 
 **难点**： 确定原生视频在 WebView 中的布局位置和大小。
 
@@ -203,3 +54,7 @@ function getElementRect(id) {
     return {'top': rect.top, 'left': rect.left, 'width': rect.width, 'height': rect.height};
 }
 ```
+
+**实现**
+
+参考 [web-video](https://github.com/littlemozart/web-video) 中的 `ExoVideoActivity`
