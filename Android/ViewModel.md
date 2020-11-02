@@ -1,22 +1,16 @@
 # Jetpack —— ViewModel 篇
 
-`ViewModel` 是 Jetpack 的一员，简单地顾名思义，它就是 MVVM 模式中的 VM 层。当然它的作用远不止如此。先列几个 `ViewModel` 主要解决的痛点：
+`ViewModel` 是 Jetpack 的核心组件之一。简单地顾名思义，可以把它当成 MVVM 模式中的 VM 层。当然它的作用远不止如此。先列几个 `ViewModel` 主要解决的痛点：
 
-+ 让数据可在发生屏幕旋转等配置更改后继续留存
++ 数据持久化
 
-如果没有在 manifest.xml 文件配置 `android:configChanges="orientation"` 这个属性旋转屏幕时， Activity 会重建，这样会导致数据丢失。虽然可以通过 `onSaveInstanceState()` 方法从 `onCreate()` 中的 `savedInstanceState` 恢复其数据，但该方法仅适合可以序列化再反序列化的少量数据，而不适合数量可能较大的数据，如用户列表或位图。
++ Fragment 之间共享数据
 
-+ 使数据在 `Activity` 与 `Fragment` 或 `Fragment` 与 `Fragment` 之间共享更简单
-
-
-
-+ 承担 MVVM 中的 MV 层，让数据和试图解耦
-
-诸如 Activity 和 Fragment 之类的界面控制器主要用于显示界面数据、对用户操作做出响应或处理操作系统通信（如权限请求）。如果要求界面控制器也负责从数据库或网络加载数据，那么会使类越发膨胀，违背单一职责原则。所以从界面控制器逻辑中分离出视图数据，实现解耦，也方便测试。
++ 数据和视图解耦
 
 ## 引用
 
-下面使官方说明需要在 gradle 文件中加入相关依赖。
+在 gradle 文件中加入相关依赖。
 
 ```
 dependencies {
@@ -25,6 +19,12 @@ dependencies {
 
     // ViewModel
     implementation "androidx.lifecycle:lifecycle-extensions:$lifecycle_version"
+
+    // 可选 - Saved state module for ViewModel
+    implementation "androidx.lifecycle:lifecycle-viewmodel-savedstate:$lifecycle_version"
+
+    // 推荐 - activity-ktx 可代替上面两个
+    implementation 'androidx.activity:activity-ktx:1.1.0'
 }
 ```
 
