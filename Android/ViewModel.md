@@ -6,10 +6,10 @@
 
 本文主要按以下几点展开讨论
 
-+ `ViewModel` 解决的痛点
-+ `ViewModel` 依赖
-+ `ViewModel` 示例
-+ `ViewModel` 原理浅析
++ `ViewModel` 解决痛点
++ `ViewModel` 依赖引用
++ `ViewModel` 用法示例
++ `ViewModel` 源码浅析
 
 ## `ViewModel` 主要解决的痛点：
 
@@ -40,8 +40,9 @@ dependencies {
     // 可选 - Saved state module for ViewModel
     implementation "androidx.lifecycle:lifecycle-viewmodel-savedstate:$lifecycle_version"
 
-    // 推荐 - activity-ktx 可代替上面两个
+    // 推荐 - activity-ktx 和 fragment-ktx 可代替上面两个
     implementation 'androidx.activity:activity-ktx:1.1.0'
+    implementation 'androidx.fragment:fragment-ktx:1.2.5'
 }
 ```
 
@@ -79,7 +80,7 @@ class MyActivity : AppCompatActivity() {
 
     /**
      * 这里初始化用了 activity-ktx 的委托属性，原始的初始化需要使用 ViewModelProvider
-     * 因为 AppCompatActivity 和 viewModels 默认的ViewModelProvider.Factory 都是
+     * 因为 AppCompatActivity 和 viewModels 默认的 ViewModelProvider.Factory 都是
      * SavedStateViewModelFactory，所以创建 SavedStateViewModel 不用自己再传
      */
     private val viewModel by viewModels<MyViewModel>()
@@ -149,28 +150,17 @@ class DetailFragment : Fragment() {
 }
 ```
 
-另外在 Lifecycle 的 2.1.0 版本后加入了 `viewModelScope` 以更方便地支持在 `ViewModel` 中使用协程，且该协程作用域会在 `clear()` 中被取消，避免内存泄漏。示例如下：
-```
-class MyViewModel() : ViewModel() {
+在 Lifecycle 的 2.1.0 版本后加入了 `viewModelScope` 以更方便地支持在 `ViewModel` 中使用协程；另外 `ViewModel` 还可以结合 `databinding` 和 `` 使用，具体可以参考，本文不再赘述。
 
-    fun initialize() {
-        viewModelScope.launch {
-            processBitmap()
-        }
-    }
+## 源码浅析
 
-    suspend fun processBitmap() = withContext(Dispatchers.Default) {
-        // 在这里做耗时操作
-    }
+在分析源码之前，我们先思考这几个问题
 
-}
-```
+1. `ViewModel` 是怎么在 `Fragment` 之间共享数据的？
+2. `ViewModel` 如何保存和恢复数据的？
+3. `ViewModel` 在配置改变和进程被杀死这两种情况下的恢复机制有什么区别？
 
-## 原理浅析
-
-**`ViewModelProvider`**
-
-从上面示例代码中可以看到 `ViewModel` 的创建均是由 `ViewModelProvider` 提供的，所以先从 `ViewModelProvider` 切入。
+带着这些问题我们逐步深入源码。首先从 `ViewModel` 的创建入开始。`ViewModel` 的创建均是由 `ViewModelProvider` 提供的，所以先看下 `ViewModelProvider` 的构造函数。
 ```
 public class ViewModelProvider {
     ...
@@ -193,7 +183,75 @@ public class ViewModelProvider {
     ...
 }
 ```
-**`ViewModelStore`**
+从构造函数中可以看出需要传入 `ViewModelStore` / `ViewModelStoreOwner` 和 `Factory` 。其中 `Factory` 是一个接口，如下
+```
+public interface Factory {
+    @NonNull
+    <T extends ViewModel> T create(@NonNull Class<T> modelClass);
+}
+```
+这里我们先了解 `ViewModel` 实例是由 `Factory` 的实现类创建的，在源码中有 `AndroidViewModelFactory` 和 `SavedStateModelFactory` 这些实现类，基本都是通过反射来生成，具体细节暂不深入。
+
+重点关注第一个参数 `ViewModelStore` / `ViewModelStoreOwner` ，其中 `ViewModelStoreOwner` 也是个接口，如下
+```
+public interface ViewModelStoreOwner {
+    @NonNull
+    ViewModelStore getViewModelStore();
+}
+```
+它提供了 `ViewModelStore` 的获取方法，也即间接提供了 `ViewModelStore` 。`ComponentActivity` 和 `Fragment` 就实现了 `ViewModelStoreOwner` 这个接口：
+```
+// ComponentActivity 是 FragmentActivity 的基类，而 FragmentActivity 是常用的 AppCompatActivity 的基类
+public class ComponentActivity extends androidx.core.app.ComponentActivity implements
+        LifecycleOwner,
+        ViewModelStoreOwner,
+        HasDefaultViewModelProviderFactory,
+        SavedStateRegistryOwner,
+        OnBackPressedDispatcherOwner {
+    ...
+
+    @NonNull
+    @Override
+    public ViewModelStore getViewModelStore() {
+        if (getApplication() == null) {
+            throw new IllegalStateException("Your activity is not yet attached to the "
+                    + "Application instance. You can't request ViewModel before onCreate call.");
+        }
+        if (mViewModelStore == null) {
+            NonConfigurationInstances nc =
+                    (NonConfigurationInstances) getLastNonConfigurationInstance();
+            if (nc != null) {
+                // Restore the ViewModelStore from NonConfigurationInstances
+                mViewModelStore = nc.viewModelStore;
+            }
+            if (mViewModelStore == null) {
+                mViewModelStore = new ViewModelStore();
+            }
+        }
+        return mViewModelStore;
+    }
+
+    ...
+}
+
+// Fragment
+public class Fragment implements ComponentCallbacks, OnCreateContextMenuListener, LifecycleOwner,
+        ViewModelStoreOwner, SavedStateRegistryOwner {
+    ...
+
+    @NonNull
+    @Override
+    public ViewModelStore getViewModelStore() {
+        if (mFragmentManager == null) {
+            throw new IllegalStateException("Can't access ViewModels from detached fragment");
+        }
+        return mFragmentManager.getViewModelStore(this);
+    }
+
+    ...
+}
+```
+那么 `ViewModelStore` 是个什么呢？为什创建 `ViewModel` 需要它呢？不妨进一步看下它的源码
 ```
 public class ViewModelStore {
 
@@ -225,13 +283,61 @@ public class ViewModelStore {
     }
 }
 ```
-**`ViewModelStoreOwner`**
+它维护的是一个 `HashMap<String, ViewModel>` ，可以推断出我们 Activity 和 Fragment 创建和使用的 `ViewModel` 是存在这个 map 里面的。
+
+既然是 `HashMap` 结构，那么在存取的时候就需要一个 key ，这个 key 是在哪里传进去的呢？让我们把焦点转移到 `ViewModelProvider` 获取 `ViewModel` 的 get 方法
 ```
-public interface ViewModelStoreOwner {
+public class ViewModelProvider {
+
+    private static final String DEFAULT_KEY =
+            "androidx.lifecycle.ViewModelProvider.DefaultKey";
+    ...
+
     @NonNull
-    ViewModelStore getViewModelStore();
-}
+    @MainThread
+    public <T extends ViewModel> T get(@NonNull Class<T> modelClass) {
+        String canonicalName = modelClass.getCanonicalName();
+        if (canonicalName == null) {
+            throw new IllegalArgumentException("Local and anonymous classes can not be ViewModels");
+        }
+        return get(DEFAULT_KEY + ":" + canonicalName, modelClass);
+    }
+
+    @NonNull
+    @MainThread
+    public <T extends ViewModel> T get(@NonNull String key, @NonNull Class<T> modelClass) {
+        ViewModel viewModel = mViewModelStore.get(key);
+
+        if (modelClass.isInstance(viewModel)) {
+            if (mFactory instanceof OnRequeryFactory) {
+                ((OnRequeryFactory) mFactory).onRequery(viewModel);
+            }
+            return (T) viewModel;
+        } else {
+            //noinspection StatementWithEmptyBody
+            if (viewModel != null) {
+                // TODO: log a warning.
+            }
+        }
+        if (mFactory instanceof KeyedFactory) {
+            viewModel = ((KeyedFactory) (mFactory)).create(key, modelClass);
+        } else {
+            viewModel = (mFactory).create(modelClass);
+        }
+        mViewModelStore.put(key, viewModel);
+        return (T) viewModel;
+    }
+
+    ...
 ```
-**`ViewModel`**
+可知 key 正是在 `get` 方法传进去的，当调用没有 key 传参的方法时，系统会自动帮你生成一个默认 key ，规则是 `DEFAULT_KEY + ':' + ViewModel 类名` 。
+
+我们通常使用的是不传 key 的方法，这里有一个地方需要注意的地方。因为上文提到 `ViewModelStore` 内部是一个 `HashMap` ，所以当我们使用默认 key 生成同类型的 `ViewModel` 时候，获取到的会是同一个 `ViewModel` 。
+
+举个例子，比如你在一个 Activity 中声明了两个类型一样的 `ViewModel` 并通过 `ViewModelProvider(this).get(xxx.class)` 的方式初始化，你会发现两个 `ViewModel` 的地址是一样的。由此，我们可以推断出 `ViewModel` 可以在 Fragment 之间共享数据，前提是他们归属同一个 Activity 的原因。
+
+当我们需要在 Fragment 之间共享 `ViewModel` 时，在初始化会使用它们的 Activity 作为入参来创建 `ViewModelProvider(requireActivity()).get(xxx.class)` ， 这样得到的是就同一个 `ViewModel` 。至此，问题一得到解决。
+
 **`ComponentActivity.NonConfigurationInstances`**
+
 **`ComponentActivity::onRetainNonConfigurationInstance()`**
