@@ -25,6 +25,8 @@
 
 **数据和视图解耦**
 
+从界面控制器逻辑中分离出视图数据可以达到很好解耦效果，同时也试单元测试更易行且更高效。
+
 ## 引用
 
 在 gradle 文件中加入相关依赖。
@@ -150,15 +152,15 @@ class DetailFragment : Fragment() {
 }
 ```
 
-在 Lifecycle 的 2.1.0 版本后加入了 `viewModelScope` 以更方便地支持在 `ViewModel` 中使用协程；另外 `ViewModel` 还可以结合 `databinding` 和 `` 使用，具体可以参考，本文不再赘述。
+在 Lifecycle 的 2.1.0 版本后加入了 `viewModelScope` 以更方便地支持在 `ViewModel` 中使用协程；另外 `ViewModel` 还可以结合 `data-binding` 和 NavGraph 使用，具体可以参考 [知识点 | ViewModel 四种集成方式](https://shenzhen2017.github.io/blog/2020/10/viewmodel-sum-up.html#more) ，本文不再赘述。
 
 ## 源码浅析
 
 在分析源码之前，我们先思考这几个问题
 
 1. `ViewModel` 是怎么在 `Fragment` 之间共享数据的？
-2. `ViewModel` 如何保存和恢复数据的？
-3. `ViewModel` 在配置改变和进程被杀死这两种情况下的恢复机制有什么区别？
+2. `ViewModel` 在配置改变时是如何保存和恢复数据的？
+3. `ViewModel` 在进程被杀死时是如何保存和恢复数据的？
 
 带着这些问题我们逐步深入源码。首先从 `ViewModel` 的创建入开始。`ViewModel` 的创建均是由 `ViewModelProvider` 提供的，所以先看下 `ViewModelProvider` 的构造函数。
 ```
@@ -251,6 +253,8 @@ public class Fragment implements ComponentCallbacks, OnCreateContextMenuListener
     ...
 }
 ```
+有兴趣的读者可以跟进 `FragmentManager` 源码看一下, `mFragmentManager` 维护了一个 `FragmentManagerViewModel`，`FragmentManagerViewModel` 里面有一个 `HashMap` ，创建并存放各个 Fragment 的 `ViewModelStore` 。而这个 `FragmentManagerViewModel` 会放进 Activity 的 `ViewModelStore` 里。
+
 那么 `ViewModelStore` 是个什么呢？为什创建 `ViewModel` 需要它呢？不妨进一步看下它的源码
 ```
 public class ViewModelStore {
@@ -283,7 +287,7 @@ public class ViewModelStore {
     }
 }
 ```
-它维护的是一个 `HashMap<String, ViewModel>` ，可以推断出我们 Activity 和 Fragment 创建和使用的 `ViewModel` 是存在这个 map 里面的。
+它维护的是一个 `HashMap<String, ViewModel>` ，可以推断出 Activity 和 Fragment 创建和使用的 `ViewModel` 是存在这个 map 里面的。
 
 既然是 `HashMap` 结构，那么在存取的时候就需要一个 key ，这个 key 是在哪里传进去的呢？让我们把焦点转移到 `ViewModelProvider` 获取 `ViewModel` 的 get 方法
 ```
@@ -338,6 +342,169 @@ public class ViewModelProvider {
 
 当我们需要在 Fragment 之间共享 `ViewModel` 时，在初始化会使用它们的 Activity 作为入参来创建 `ViewModelProvider(requireActivity()).get(xxx.class)` ， 这样得到的是就同一个 `ViewModel` 。至此，问题一得到解决。
 
+接下来看问题二。在此之前，读者可以回想一下上文关于 `ViewModelStore` 的获取过程。
+
+```
+if (mViewModelStore == null) {
+    NonConfigurationInstances nc =
+                    (NonConfigurationInstances) getLastNonConfigurationInstance();
+    if (nc != null) {
+        // Restore the ViewModelStore from NonConfigurationInstances
+        mViewModelStore = nc.viewModelStore;
+    }
+    if (mViewModelStore == null) {
+        mViewModelStore = new ViewModelStore();
+    }
+}
+```
+
+首先先判断是否已经初始化，如果没有接着从一个 `NonConfigurationInstances` 的实例获取，如果还是空再 new 一个。其中 `NonConfigurationInstances` 正是问题的关键。
+
 **`ComponentActivity.NonConfigurationInstances`**
 
-**`ComponentActivity::onRetainNonConfigurationInstance()`**
+```
+static final class NonConfigurationInstances {
+    Object custom;
+    ViewModelStore viewModelStore;
+}
+```
+
+`NonConfigurationInstances` 的实例是从哪里来的？跟踪 `getLastNonConfigurationInstance()` 方法，它来到了基类 Activity
+
+```
+/**
+ * Retrieve the non-configuration instance data that was previously
+ * returned by {@link #onRetainNonConfigurationInstance()}.  
+ */
+@Nullable
+public Object getLastNonConfigurationInstance() {
+    return mLastNonConfigurationInstances != null
+            ? mLastNonConfigurationInstances.activity : null;
+}
+```
+
+这里明明返回的是 `mLastNonConfigurationInstances.activity` ，为什么注释里说是从之前的 `onRetainNonConfigurationInstance()` 中得到的？稍安勿躁，让我们一步步跟踪系统调用流程，就会发现注释为什么这样说了。
+
+首先我们看一下这个 `mLastNonConfigurationInstances` 是在哪里赋值的。 从 Activity 的源码里搜索了一下，发现是在 `attach` 方法里：
+
+```
+@UnsupportedAppUsage
+final void attach(Context context, ActivityThread aThread,
+        Instrumentation instr, IBinder token, int ident,
+        Application application, Intent intent, ActivityInfo info,
+        CharSequence title, Activity parent, String id,
+        NonConfigurationInstances lastNonConfigurationInstances,
+        Configuration config, String referrer, IVoiceInteractor voiceInteractor,
+        Window window, ActivityConfigCallback activityConfigCallback, IBinder assistToken) {
+    attachBaseContext(context);
+    ...
+    mLastNonConfigurationInstances = lastNonConfigurationInstances;
+    ...
+}
+```
+
+那么，又是哪里调用了 `attach` 呢？（问题太深，是不是有点想放弃了😂……）这就要翻一下系统源码 ActivityThread 了。
+
+```
+public final class ActivityThread extends ClientTransactionHandler {
+
+    private Activity performLaunchActivity(ActivityClientRecord r, Intent customIntent) {
+        
+        ...
+        
+        activity.attach(appContext, this, getInstrumentation(), r.token,
+                r.ident, app, r.intent, r.activityInfo, title, r.parent,
+                r.embeddedID, r.lastNonConfigurationInstances, config,
+                r.referrer, r.voiceInteractor, window, r.configCallback,
+                r.assistToken);
+
+    }
+
+}
+```
+从这里可以看到是从 `performLaunchActivity` 方法中调用的。好了，知道了 `mLastNonConfigurationInstances` 是什么时候被赋值的，但知道这个值是是从哪里来的。
+
+读者不妨先思考一下，当配置发生改变时，原 Activity 会被销毁然后重新创建一个新的实例，所以我们可以从 Activity 的 `onDestroy` 方法切入。这里 debug 看看调用堆栈
+
+![debug](../assets/debug.png)
+
+所以再次回到 ActivityThread 这个类
+
+```
+public final class ActivityThread extends ClientTransactionHandler {
+
+    ...
+
+    ActivityClientRecord performDestroyActivity(
+        IBinder token, boolean finishing,
+        int configChanges, 
+        boolean getNonConfigInstance, 
+        String reason) {
+            
+        ...
+        
+        ActivityClientRecord r = mActivities.get(token);
+        
+        if (getNonConfigInstance) {
+            try {
+                r.lastNonConfigurationInstances
+                        = r.activity.retainNonConfigurationInstances();
+            } catch (Exception e) {
+                if (!mInstrumentation.onException(r.activity, e)) {
+                    throw new RuntimeException(
+                            "Unable to retain activity "
+                            + r.intent.getComponent().toShortString()
+                            + ": " + e.toString(), e);
+                }
+            }
+        }
+        
+        return r;
+    }
+}
+```
+
+到这里就很明确了，在 Activity 销毁时调用了
+
+```
+NonConfigurationInstances retainNonConfigurationInstances() {
+    Object activity = onRetainNonConfigurationInstance();
+    ...
+    NonConfigurationInstances nci = new NonConfigurationInstances();
+    nci.activity = activity;
+    ...
+    return nci;
+}
+```
+
+这里实际就是调用了刚刚注释说的 `onRetainNonConfigurationInstance()` ，保存 `activity` 实例（这里的 `activity` 不是指 Activity 本身，要看具体返回的对象）。以 `ComponentActivity` 为例
+
+```
+@Override
+@Nullable
+public final Object onRetainNonConfigurationInstance() {
+    Object custom = onRetainCustomNonConfigurationInstance();
+
+    ViewModelStore viewModelStore = mViewModelStore;
+    if (viewModelStore == null) {
+        // No one called getViewModelStore(), so see if there was an existing
+        // ViewModelStore from our last NonConfigurationInstance
+        NonConfigurationInstances nc =
+            (NonConfigurationInstances) getLastNonConfigurationInstance();
+        if (nc != null) {
+            viewModelStore = nc.viewModelStore;
+        }
+    }
+
+    if (viewModelStore == null && custom == null) {
+        return null;
+    }
+
+    NonConfigurationInstances nci = new NonConfigurationInstances();
+    nci.custom = custom;
+    nci.viewModelStore = viewModelStore;
+    return nci;
+}
+```
+
+这里关键就是就保存 `ViewModelStore` 示例。这样当原来 Activity 销毁重新创建拿到的 `ViewModelStore` 就是同一个对象了。
