@@ -507,4 +507,16 @@ public final Object onRetainNonConfigurationInstance() {
 }
 ```
 
-这里关键就是就保存 `ViewModelStore` 示例。这样当原来 Activity 销毁重新创建拿到的 `ViewModelStore` 就是同一个对象了。
+这里关键就是就保存 `ViewModelStore` 实例。这样当原来 Activity 销毁重新创建拿到的 `ViewModelStore` 就是同一个对象了。
+
+最后一个问题，我们先来看一张官方指南中 [保存状态](https://developer.android.google.cn/topic/libraries/architecture/saving-states) 的一个表格
+
+![state](../assets/table.png)
+
+从表格上看，ViewModel 一开始设计是并不能“在系统发起的进程终止后继续存在的”，从 Activity `1.1.0` 和 Fragment `1.2.0` 后加入 `SavedStateHandle` 相关处理逻辑后才有这个能力。它的原理跟 `onSaveInstanceState()` 差不多，所以也只能保留能够被序列化且有限大小的数据，如下图，没办法跟普通 ViewModel 一样。
+
+![接受类型](../assets/type.png)
+
+> Talk is cheap, show me the code.
+
+直接看源码吧
